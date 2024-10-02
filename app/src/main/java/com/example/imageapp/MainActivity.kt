@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -34,11 +35,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.tooling.preview.Preview
@@ -102,6 +108,8 @@ fun HomePage(){
 @Composable
 fun ImageGrid(contacts: List<Contact>) {
     val context = LocalContext.current
+    val selectedContacts = remember { mutableStateListOf<Contact>() }
+
     LazyVerticalGrid(
         columns = GridCells.Fixed(3),
         contentPadding = PaddingValues(8.dp),
@@ -132,12 +140,41 @@ fun ImageGrid(contacts: List<Contact>) {
                     painter = painter,
                     contentDescription = null,
                     contentScale = ContentScale.Crop, // Crop to fit within bounds
-                    modifier = Modifier.fillMaxSize() // Fill the entire box
+                    modifier = Modifier
+                        .fillMaxSize() // Fill the entire box
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = {
+                                    Log.d("image", "Image tapped")
+                                },
+                                onLongPress = {
+                                    if (selectedContacts.contains(contact)) {
+                                        selectedContacts.remove(contact)
+                                    } else {
+                                        selectedContacts.add(contact)
+                                    }
+                                    Log.d("image", "Image long-pressed")
+                                }
+                            )
+                        }
                 )
+
+                // Show tick image if the contact is selected
+                if (selectedContacts.contains(contact)) {
+                    Image(
+                        painter = painterResource(id = R.drawable.baseline_check_circle_outline_24), // Your tick image resource
+                        contentDescription = "Selected",
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(24.dp) // Adjust size as needed
+                            .padding(4.dp)
+                    )
+                }
             }
         }
     }
 }
+
 
 
 @Composable
@@ -146,12 +183,4 @@ fun Greeting(name: String, modifier: Modifier = Modifier) {
         text = "Hello $name!",
         modifier = modifier
     )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    ImageAppTheme {
-        Greeting("Android")
-    }
 }
