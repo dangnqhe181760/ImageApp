@@ -1,7 +1,17 @@
 package com.example.imageapp
 
+import android.app.Activity
+import android.content.ContentUris
+import android.content.ContentValues
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
+import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -10,6 +20,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,15 +39,27 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -49,6 +72,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.ImageLoader
 import coil.annotation.ExperimentalCoilApi
@@ -57,7 +82,11 @@ import coil.request.ImageRequest
 import coil.request.SuccessResult
 import com.example.imageapp.ui.theme.ImageAppTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okio.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalComposeUiApi::class)
@@ -85,8 +114,8 @@ class MainActivity : ComponentActivity() {
                             ),
                         ),
                 ) {
-                    // Call HomePage which reacts to contact changes
-                    HomePage()
+                    // Call TabScreen() which reacts to contact changes
+                    TabScreen()
                 }
             }
 
@@ -97,7 +126,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun HomePage(){
+fun HomePage() {
     val viewModel: MainViewModel = viewModel()
     val observedContacts by viewModel.contactResponse.collectAsState(initial = emptyList())
     viewModel.proceedContact()
@@ -106,68 +135,36 @@ fun HomePage(){
 
 @OptIn(ExperimentalCoilApi::class)
 @Composable
-fun ImageGrid(contacts: List<Contact>) {
+fun SavedImage() {
     val context = LocalContext.current
-    val selectedContacts = remember { mutableStateListOf<Contact>() }
+    val images = remember { mutableStateListOf<Uri>() }
 
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(3),
-        contentPadding = PaddingValues(8.dp),
-        modifier = Modifier.fillMaxSize()
-    ) {
-        items(contacts.size) { index ->
-            val contact = contacts[index]
-            val painter = rememberImagePainter(data = contact.pictureUrl)
+    // Load saved images from gallery
+    LaunchedEffect(Unit) {
+        loadImagesFromGallery(context, images)
+    }
 
-            // Launched effect to handle image saving
-            LaunchedEffect(contact.pictureUrl) {
-                Log.d("image", "start to load image")
-                val imageLoader = ImageLoader(context)
-                val request = ImageRequest.Builder(context)
-                    .data(contact.pictureUrl)
-                    .build()
+    Column(modifier = Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),  // 3 columns grid
+            contentPadding = PaddingValues(8.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items(images.size) { index ->
+                val imageUri = images[index]
+                val painter = rememberImagePainter(data = imageUri)
 
-                val result = (imageLoader.execute(request) as? SuccessResult)?.drawable
-            }
-
-            Box(
-                modifier = Modifier
-                    .padding(8.dp)
-                    .aspectRatio(1f) // Ensure a square aspect ratio
-                    .fillMaxWidth() // Auto-fit to the available width
-            ) {
-                Image(
-                    painter = painter,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop, // Crop to fit within bounds
+                Box(
                     modifier = Modifier
-                        .fillMaxSize() // Fill the entire box
-                        .pointerInput(Unit) {
-                            detectTapGestures(
-                                onTap = {
-                                    Log.d("image", "Image tapped")
-                                },
-                                onLongPress = {
-                                    if (selectedContacts.contains(contact)) {
-                                        selectedContacts.remove(contact)
-                                    } else {
-                                        selectedContacts.add(contact)
-                                    }
-                                    Log.d("image", "Image long-pressed")
-                                }
-                            )
-                        }
-                )
-
-                // Show tick image if the contact is selected
-                if (selectedContacts.contains(contact)) {
+                        .padding(8.dp)
+                        .aspectRatio(1f) // Ensures the images are square
+                        .fillMaxWidth() // Fill the width of the grid cell
+                ) {
                     Image(
-                        painter = painterResource(id = R.drawable.baseline_check_circle_outline_24), // Your tick image resource
-                        contentDescription = "Selected",
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .size(24.dp) // Adjust size as needed
-                            .padding(4.dp)
+                        painter = painter,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop, // Crop to fit within bounds
+                        modifier = Modifier.fillMaxSize() // Fill the grid cell
                     )
                 }
             }
@@ -175,7 +172,184 @@ fun ImageGrid(contacts: List<Contact>) {
     }
 }
 
+fun loadImagesFromGallery(context: Context, images: SnapshotStateList<Uri>) {
+    val projection = arrayOf(
+        MediaStore.Images.Media._ID,
+        MediaStore.Images.Media.DISPLAY_NAME
+    )
 
+    val query = context.contentResolver.query(
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+        projection,
+        null,
+        null,
+        "${MediaStore.Images.Media.DATE_ADDED} DESC"
+    )
+
+    query?.use { cursor ->
+        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+        while (cursor.moveToNext()) {
+            val id = cursor.getLong(idColumn)
+            val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+            images.add(uri)
+        }
+    }
+}
+
+@Composable
+fun TabScreen() {
+    var tabIndex by remember { mutableStateOf(0) }
+
+    val tabs = listOf("Online Image", "Saved Image")
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        TabRow(selectedTabIndex = tabIndex) {
+            tabs.forEachIndexed { index, title ->
+                Tab(text = { Text(title) },
+                    selected = tabIndex == index,
+                    onClick = { tabIndex = index },
+                    icon = {
+                        when (index) {
+                            0 -> Image(
+                                painter = painterResource(id = R.drawable.baseline_language_24),
+                                contentDescription = "Selected",
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .padding(4.dp)
+                            )
+                            1 -> Image(
+                                painter = painterResource(id = R.drawable.baseline_download_for_offline_24),
+                                contentDescription = "Selected",
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .padding(4.dp)
+                            )
+                        }
+                    }
+                )
+            }
+        }
+        when (tabIndex) {
+            0 -> HomePage()
+            1 -> SavedImage()
+        }
+    }
+}
+
+@OptIn(ExperimentalCoilApi::class)
+@Composable
+fun ImageGrid(contacts: List<Contact>) {
+    val context = LocalContext.current
+    val selectedContacts = remember { mutableStateListOf<Contact>() }
+    val coroutineScope = rememberCoroutineScope()
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Button(
+            onClick = {
+                coroutineScope.launch {
+                    selectedContacts.forEach { contact ->
+                        withContext(Dispatchers.IO) {
+                            Log.d("image", "start to load image")
+                            val bitmap = loadBitmapFromUrl(contact.pictureUrl)
+                            if (bitmap != null) {
+                                saveImageToGallery(context, bitmap, contact.id.toString())
+                            }
+                        }
+                    }
+                }
+            }
+        ) {
+            Text(text = "Save Image")
+        }
+
+        Spacer(modifier = Modifier.width(16.dp))
+
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(3),
+            contentPadding = PaddingValues(8.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items(contacts.size) { index ->
+                val contact = contacts[index]
+                val painter = rememberImagePainter(data = contact.pictureUrl)
+
+                Box(
+                    modifier = Modifier
+                        .padding(8.dp)
+                        .aspectRatio(1f) // Ensure a square aspect ratio
+                        .fillMaxWidth() // Auto-fit to the available width
+                ) {
+                    Image(
+                        painter = painter,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop, // Crop to fit within bounds
+                        modifier = Modifier
+                            .fillMaxSize() // Fill the entire box
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onTap = {
+                                        Log.d("image", "Image tapped")
+                                    },
+                                    onLongPress = {
+                                        if (selectedContacts.contains(contact)) {
+                                            selectedContacts.remove(contact)
+                                        } else {
+                                            selectedContacts.add(contact)
+                                        }
+                                        Log.d("image", "Image long-pressed")
+                                    }
+                                )
+                            }
+                    )
+
+                    // Show tick image if the contact is selected
+                    if (selectedContacts.contains(contact)) {
+                        Image(
+                            painter = painterResource(id = R.drawable.baseline_check_circle_outline_24),
+                            contentDescription = "Selected",
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(24.dp)
+                                .padding(4.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+suspend fun loadBitmapFromUrl(url: String): Bitmap? = withContext(Dispatchers.IO) {
+    try {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.doInput = true
+        connection.connect()
+        val input = connection.inputStream
+        BitmapFactory.decodeStream(input)
+    } catch (e: IOException) {
+        e.printStackTrace()
+        null
+    }
+}
+
+fun saveImageToGallery(context: Context, bitmap: Bitmap, imageName: String) {
+    val values = ContentValues().apply {
+        put(MediaStore.Images.Media.DISPLAY_NAME, "$imageName.jpg")
+        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+    }
+
+    val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+
+    uri?.let {
+        context.contentResolver.openOutputStream(it).use { outputStream ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream!!)
+        }
+    }
+}
 
 @Composable
 fun Greeting(name: String, modifier: Modifier = Modifier) {
