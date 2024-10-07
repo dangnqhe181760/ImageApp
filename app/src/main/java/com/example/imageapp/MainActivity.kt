@@ -138,6 +138,8 @@ fun HomePage() {
 fun SavedImage() {
     val context = LocalContext.current
     val images = remember { mutableStateListOf<Uri>() }
+    val selectedImages = remember { mutableStateListOf<Uri>() }
+    val coroutineScope = rememberCoroutineScope()
 
     // Load saved images from gallery
     LaunchedEffect(Unit) {
@@ -145,6 +147,23 @@ fun SavedImage() {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        if (selectedImages.isNotEmpty()) {
+            Button(
+                onClick = {
+                    coroutineScope.launch {
+                        selectedImages.forEach { imageUri ->
+                            deleteImageFromGallery(context, imageUri)
+                            images.remove(imageUri)
+                        }
+                        selectedImages.clear()  // Clear selection after deletion
+                    }
+                },
+                modifier = Modifier.padding(8.dp)
+            ) {
+                Text("Delete Selected Images")
+            }
+        }
+
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),  // 3 columns grid
             contentPadding = PaddingValues(8.dp),
@@ -159,6 +178,17 @@ fun SavedImage() {
                         .padding(8.dp)
                         .aspectRatio(1f) // Ensures the images are square
                         .fillMaxWidth() // Fill the width of the grid cell
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = {
+                                    if (selectedImages.contains(imageUri)) {
+                                        selectedImages.remove(imageUri)
+                                    } else {
+                                        selectedImages.add(imageUri)
+                                    }
+                                }
+                            )
+                        }
                 ) {
                     Image(
                         painter = painter,
@@ -166,12 +196,35 @@ fun SavedImage() {
                         contentScale = ContentScale.Crop, // Crop to fit within bounds
                         modifier = Modifier.fillMaxSize() // Fill the grid cell
                     )
+
+                    // Show a checkmark on selected images
+                    if (selectedImages.contains(imageUri)) {
+                        Image(
+                            painter = painterResource(id = R.drawable.baseline_check_circle_outline_24),
+                            contentDescription = "Selected",
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(24.dp)
+                                .padding(4.dp)
+                        )
+                    }
                 }
             }
         }
     }
 }
 
+// Function to delete an image from the gallery
+fun deleteImageFromGallery(context: Context, imageUri: Uri) {
+    try {
+        context.contentResolver.delete(imageUri, null, null)
+        Log.d("image", "Deleted image: $imageUri")
+    } catch (e: Exception) {
+        Log.e("image", "Failed to delete image: $imageUri", e)
+    }
+}
+
+// Load images from the custom gallery folder
 fun loadImagesFromGallery(context: Context, images: SnapshotStateList<Uri>) {
     val projection = arrayOf(
         MediaStore.Images.Media._ID,
@@ -181,8 +234,8 @@ fun loadImagesFromGallery(context: Context, images: SnapshotStateList<Uri>) {
     val query = context.contentResolver.query(
         MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
         projection,
-        null,
-        null,
+        "${MediaStore.Images.Media.RELATIVE_PATH} = ?",
+        arrayOf("${Environment.DIRECTORY_PICTURES}/MyAppImages/"),
         "${MediaStore.Images.Media.DATE_ADDED} DESC"
     )
 
@@ -336,18 +389,31 @@ suspend fun loadBitmapFromUrl(url: String): Bitmap? = withContext(Dispatchers.IO
 }
 
 fun saveImageToGallery(context: Context, bitmap: Bitmap, imageName: String) {
-    val values = ContentValues().apply {
+    val resolver = context.contentResolver
+
+    // Set the content values for the image
+    val contentValues = ContentValues().apply {
         put(MediaStore.Images.Media.DISPLAY_NAME, "$imageName.jpg")
         put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+        put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/MyAppImages")
+        put(MediaStore.Images.Media.IS_PENDING, 1)
     }
 
-    val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+    // Insert the image into the MediaStore
+    val imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
 
-    uri?.let {
-        context.contentResolver.openOutputStream(it).use { outputStream ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream!!)
+    if (imageUri != null) {
+        resolver.openOutputStream(imageUri)?.use { outputStream ->
+            // Save the bitmap to the output stream
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
         }
+
+        // After saving, mark the image as complete
+        contentValues.clear()
+        contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+        resolver.update(imageUri, contentValues, null, null)
+    } else {
+        Log.e("saveImage", "Failed to save image")
     }
 }
 
